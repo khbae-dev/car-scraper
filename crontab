@@ -1,0 +1,2 @@
+# 매일 새벽 3시에 스크립트 실행
+0 3 * * * cd /app && node index.js >> /var/log/crawler.log 2>&1
