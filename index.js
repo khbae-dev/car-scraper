@@ -3,67 +3,112 @@ const fs = require('fs');
 
 (async () => {
   const browser = await puppeteer.launch({
-    headless: true, // 화면 확인 필요시 false
+    headless: true,
     defaultViewport: null,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
-  
+
   const page = await browser.newPage();
-  
-  // 경차 매물 페이지로 이동
-  await page.goto(
-    'https://www.bobaedream.co.kr/mycar/mycar_list.php?gubun=K&ot=second&carriage=%EA%B2%BD%EC%B0%A8&page=1&order=S11&view_size=20',
-    { waitUntil: 'networkidle2' }
+
+  // User-Agent 설정
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36');
+
+  const baseUrl = 'https://www.bobaedream.co.kr/mycar/mycar_list.php?gubun=K&ot=second';
+  console.log('Visiting main page:', baseUrl);
+  await page.goto(baseUrl, { waitUntil: 'networkidle2' });
+
+  const menuButtons = await page.$$eval('.slide.fir button', buttons =>
+    buttons.map(button => ({
+      name: button.querySelector('.txt')?.innerText.trim() || 'Unnamed',
+      onclick: button.getAttribute('onclick')
+    }))
   );
 
-  // 매물 리스트 로딩 대기
-  await page.waitForSelector('li.product-item');
+  console.log('Menu buttons found:', menuButtons);
 
-  // 매물 정보 추출
-  // 각 매물(li.product-item)별로 제목, 연식, 연료, 주행거리, 가격, 지역/판매자 정보를 추출
-  const cars = await page.$$eval('li.product-item', items => {
-    return items.map(item => {
-      const titleEl = item.querySelector('.title .tit a');
-      const title = titleEl ? titleEl.innerText.trim() : '';
+  const allResults = {};
 
-      const yearEl = item.querySelector('.year .text');
-      const year = yearEl ? yearEl.innerText.trim() : '';
+  for (const menu of menuButtons) {
+    console.log(`Processing menu: ${menu.name}`);
 
-      const fuelEl = item.querySelector('.fuel .text');
-      const fuel = fuelEl ? fuelEl.innerText.trim() : '';
+    const menuResults = [];
+    let currentPage = 1;
 
-      const kmEl = item.querySelector('.km .text');
-      const km = kmEl ? kmEl.innerText.trim() : '';
+    while (true) {
+      console.log(`Visiting page ${currentPage} of menu ${menu.name}`);
 
-      const priceEl = item.querySelector('.price b em');
-      const price = priceEl ? priceEl.innerText.trim() : '';
+      try {
+        // URL 방문
+        await page.goto(
+          `${baseUrl}&carriage=${encodeURIComponent(menu.name)}&page=${currentPage}&order=S11&view_size=20`,
+          { waitUntil: 'networkidle2', timeout: 30000 }
+        );
 
-      // 판매자 및 지역 정보 추출
-      // 판매자 정보는 .seller .seller-content 안에 있음
-      const sellerNameEl = item.querySelector('.seller .seller-name .text');
-      const sellerName = sellerNameEl ? sellerNameEl.innerText.trim() : '';
+        // 매물이 없으면 종료
+        const productItems = await page.$$('li.product-item');
+        if (productItems.length === 0) {
+          console.log(`No more items found for menu ${menu.name} on page ${currentPage}.`);
+          break;
+        }
 
-      // 지역 정보는 .seller .content-item 중 첫 번째 나타나는 곳에 있음
-      const locationItem = item.querySelector('.seller .content-list .content-item span.text');
-      const location = locationItem ? locationItem.innerText.trim() : '';
+        // 데이터 크롤링
+        const cars = await page.$$eval('li.product-item', items => {
+          return items.map(item => {
+            const titleEl = item.querySelector('.title .tit a');
+            const title = titleEl ? titleEl.innerText.trim() : '';
+            const yearEl = item.querySelector('.year .text');
+            const year = yearEl ? yearEl.innerText.trim() : '';
+            const fuelEl = item.querySelector('.fuel .text');
+            const fuel = fuelEl ? fuelEl.innerText.trim() : '';
+            const kmEl = item.querySelector('.km .text');
+            const km = kmEl ? kmEl.innerText.trim() : '';
+            const priceEl = item.querySelector('.price b em');
+            const price = priceEl ? priceEl.innerText.trim() : '';
+            const sellerNameEl = item.querySelector('.seller .seller-name .text');
+            const sellerName = sellerNameEl ? sellerNameEl.innerText.trim() : '';
+            const locationItem = item.querySelector('.seller .content-list .content-item span.text');
+            const location = locationItem ? locationItem.innerText.trim() : '';
 
-      return {
-        title,
-        year,
-        fuel,
-        km,
-        price: price + '만원', // 가격 단위가 만원 기준으로 되어 있으므로 만원 단위 추가
-        sellerName,
-        location
-      };
-    });
-  });
+            return {
+              title,
+              year,
+              fuel,
+              km,
+              price: price + '만원',
+              sellerName,
+              location
+            };
+          });
+        });
 
-  // JSON 형태로 콘솔 출력
-  console.log(JSON.stringify(cars, null, 2));
+        menuResults.push(...cars);
 
-  // JSON 파일로 저장하고 싶다면 주석 해제
-  // fs.writeFileSync('cars.json', JSON.stringify(cars, null, 2), 'utf-8');
+        // 다음 페이지 탐지 및 이동
+        const hasNextPage = await page.evaluate(() => {
+          const currentPageEl = document.querySelector('.paging-inner strong');
+          const nextPageEl = currentPageEl?.nextElementSibling;
+          return nextPageEl && nextPageEl.tagName === 'A' ? true : false;
+        });
+
+        if (!hasNextPage) {
+          console.log(`No more pages for menu ${menu.name}.`);
+          break;
+        }
+
+        // 다음 페이지로 이동
+        currentPage++;
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 요청 간 대기
+      } catch (error) {
+        console.error(`Error on ${menu.name} - Page ${currentPage}:`, error);
+        break; // 에러 발생 시 순회 종료
+      }
+    }
+
+    allResults[menu.name] = menuResults;
+  }
+
+  console.log('Crawling completed.');
+  fs.writeFileSync('cars.json', JSON.stringify(allResults, null, 2), 'utf-8');
 
   await browser.close();
 })();
