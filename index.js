@@ -1,6 +1,18 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
+// 📅 현재 날짜 및 시간으로 파일명 생성 함수
+function getCurrentTimestamp() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');  // 월 (2자리)
+  const day = String(now.getDate()).padStart(2, '0');          // 일 (2자리)
+  const hours = String(now.getHours()).padStart(2, '0');       // 시간 (2자리)
+  const minutes = String(now.getMinutes()).padStart(2, '0');   // 분 (2자리)
+  const seconds = String(now.getSeconds()).padStart(2, '0');   // 초 (2자리)
+  return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
 (async () => {
   const browser = await puppeteer.launch({
     headless: true,
@@ -57,7 +69,7 @@ const fs = require('fs');
             const titleEl = item.querySelector('.title .tit a');
             const title = titleEl ? titleEl.innerText.trim() : '';
             const yearEl = item.querySelector('.year .text');
-            const year = yearEl ? yearEl.innerText.trim() : '';
+            const year = yearEl ? yearEl.innerText.replace(/\n.*$/, '').trim() : '';
             const fuelEl = item.querySelector('.fuel .text');
             const fuel = fuelEl ? fuelEl.innerText.trim() : '';
             const kmEl = item.querySelector('.km .text');
@@ -107,8 +119,12 @@ const fs = require('fs');
     allResults[menu.name] = menuResults;
   }
 
-  console.log('Crawling completed.');
-  fs.writeFileSync('cars.json', JSON.stringify(allResults, null, 2), 'utf-8');
+  // 📁 파일명 생성
+  const timestamp = getCurrentTimestamp();
+  const fileName = `cars_${timestamp}.json`;
+
+  console.log(`Saving data to ${fileName}...`);
+  fs.writeFileSync(fileName, JSON.stringify(allResults, null, 2), 'utf-8');
 
   await browser.close();
 })();
